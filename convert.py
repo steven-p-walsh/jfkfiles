@@ -14,6 +14,7 @@ import requests
 import base64
 import io
 import json
+import random
 from pathlib import Path
 from tqdm import tqdm
 from pdf2image import convert_from_path
@@ -24,7 +25,7 @@ input_directory = './2025_jfk_pdfs'
 output_directory = './2025_jfk_mds'
 gemma_endpoint = 'http://localhost:5000/v1/chat/completions'  # Hardcoded Gemma 3 API endpoint
 dpi = 300  # Hardcoded DPI for PDF to image conversion
-workers = 4  # Hardcoded number of worker processes
+workers = 1   # Hardcoded number of worker processes
 chunk_size = 10  # Hardcoded number of pages to process at once
 password = None  # Hardcoded password for protected PDF files (None if not needed)
 prompt_file = None  # Hardcoded path to a text file containing a custom prompt for Gemma 3 (None if not needed)
@@ -137,8 +138,8 @@ def process_image_with_gemma(image, gemma_endpoint, custom_prompt=None, max_toke
     # Try to call the API with retries
     for attempt in range(max_retries):
         try:
-            # Send the request to the local Gemma 3 endpoint
-            response = requests.post(gemma_endpoint, json=payload, timeout=120)
+            # Send the request to the local Gemma 3 endpoint without timeout
+            response = requests.post(gemma_endpoint, json=payload)
             
             if response.status_code == 200:
                 result = response.json()
@@ -199,6 +200,11 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
         rel_path = pdf_path.relative_to(input_path)
         output_path = Path(output_dir) / rel_path.with_suffix('.md')
         
+        # Skip if output file already exists
+        if output_path.exists():
+            print(f"Skipping: {rel_path} (output file already exists)")
+            continue
+        
         # Create parent directories if needed
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -220,32 +226,40 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
             # Process in chunks to manage memory
             full_markdown = []
             
-            for start_page in range(0, total_pages, chunk_size):
-                end_page = min(start_page + chunk_size, total_pages)
+            # Create a list of all page numbers and shuffle them
+            all_pages = list(range(1, total_pages + 1))
+            random.shuffle(all_pages)
+            
+            # Process pages in randomized chunks
+            for i in range(0, len(all_pages), chunk_size):
+                chunk_pages = all_pages[i:i + chunk_size]
                 
-                print(f"  Converting pages {start_page+1}-{end_page} to images")
+                print(f"  Converting pages {chunk_pages} to images")
                 
-                # Convert PDF chunk to images
-                images = convert_pdf_to_images(
-                    str(pdf_path), 
-                    dpi=dpi,
-                    first_page=start_page+1,
-                    last_page=end_page,
-                    password=password
-                )
+                # Process each page individually since they're now random
+                chunk_results = []
                 
-                if not images:
-                    print(f"  Error: Could not convert pages {start_page+1}-{end_page} to images. Skipping.")
-                    continue
+                for page_num in chunk_pages:
+                    # Convert single PDF page to image
+                    images = convert_pdf_to_images(
+                        str(pdf_path), 
+                        dpi=dpi,
+                        first_page=page_num,
+                        last_page=page_num,
+                        password=password
+                    )
+                    
+                    if not images:
+                        print(f"  Error: Could not convert page {page_num} to image. Skipping.")
+                        chunk_results.append((page_num, f"\n\n## [Page {page_num} - ERROR]\n\nFailed to convert page to image\n\n"))
+                        continue
+                    
+                    # We only requested one page, so there should be only one image
+                    image = images[0]
+                    chunk_results.append((page_num, image))
                 
                 # Process pages in parallel
-                print(f"  Processing pages {start_page+1}-{end_page} with Gemma 3")
-                
-                # Create a list of tasks
-                tasks = []
-                for i, image in enumerate(images):
-                    page_num = start_page + i + 1
-                    tasks.append((page_num, image))
+                print(f"  Processing randomized pages with Gemma 3")
                 
                 # Process pages with a progress bar
                 results = []
@@ -257,7 +271,7 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
                             gemma_endpoint, 
                             custom_prompt=custom_prompt,
                             max_tokens=max_tokens
-                        ): (page, img) for page, img in tasks
+                        ): (page, img) for page, img in chunk_results if isinstance(img, Image.Image)
                     }
                     
                     for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing pages"):
@@ -272,14 +286,22 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
                             print(f"  {error_msg}")
                             results.append((page_num, f"\n\n## [Page {page_num} - ERROR]\n\n{error_msg}\n\n"))
                 
-                # Sort results by page number
-                results.sort(key=lambda x: x[0])
-                chunk_markdown = [result for _, result in results]
-                full_markdown.extend(chunk_markdown)
+                # Add any error results that were skipped earlier
+                for page_num, result in chunk_results:
+                    if isinstance(result, str):  # This is an error message
+                        results.append((page_num, result))
+                
+                # Add results to full markdown
+                full_markdown.extend([result for _, result in results])
+            
+            # Sort results by page number for final output
+            full_markdown_with_pages = [(int(md.split('[Page ')[1].split(']')[0]), md) for md in full_markdown]
+            full_markdown_with_pages.sort(key=lambda x: x[0])
+            sorted_markdown = [md for _, md in full_markdown_with_pages]
             
             # Write to output file
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write("\n\n---\n\n".join(full_markdown))
+                f.write("\n\n---\n\n".join(sorted_markdown))
             
             print(f"  Saved to: {output_path}")
             
