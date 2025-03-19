@@ -195,6 +195,9 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
     
     print(f"Found {len(pdf_files)} PDF files to process")
     
+    # Randomize the order of PDF files
+    random.shuffle(pdf_files)
+    
     for pdf_path in pdf_files:
         # Create relative path structure in output directory
         rel_path = pdf_path.relative_to(input_path)
@@ -226,17 +229,13 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
             # Process in chunks to manage memory
             full_markdown = []
             
-            # Create a list of all page numbers and shuffle them
-            all_pages = list(range(1, total_pages + 1))
-            random.shuffle(all_pages)
-            
-            # Process pages in randomized chunks
-            for i in range(0, len(all_pages), chunk_size):
-                chunk_pages = all_pages[i:i + chunk_size]
+            # Process pages in sequential chunks
+            for i in range(0, total_pages, chunk_size):
+                chunk_pages = list(range(i + 1, min(i + chunk_size + 1, total_pages + 1)))
                 
                 print(f"  Converting pages {chunk_pages} to images")
                 
-                # Process each page individually since they're now random
+                # Process each page individually in order
                 chunk_results = []
                 
                 for page_num in chunk_pages:
@@ -259,7 +258,7 @@ def process_pdf_directory(input_dir, output_dir, gemma_endpoint, dpi=300, worker
                     chunk_results.append((page_num, image))
                 
                 # Process pages in parallel
-                print(f"  Processing randomized pages with Gemma 3")
+                print(f"  Processing pages with Gemma 3")
                 
                 # Process pages with a progress bar
                 results = []
