@@ -1,0 +1,45 @@
+# Ignore all PDF files regardless of location
+*.pdf
+
+# Explicitly not ignore markdown files
+!*.md
+
+# Python-specific ignores
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env/
+.venv/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Output directories (optional, uncomment if you want to ignore output)
+# output/
+# markdown_output/
